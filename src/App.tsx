@@ -6,12 +6,13 @@ import {
   RotateCcw, 
   Play, 
   X, 
+  Check,
   Info,
   Settings,
   Volume2,
   VolumeX,
   Home,
-  Video,
+  RefreshCw, 
   Gamepad,
   Gamepad2
 } from 'lucide-react';
@@ -20,6 +21,8 @@ import {
   getFirestore, 
   collection, 
   addDoc, 
+  updateDoc,
+  doc,
   query, 
   where,
   orderBy, 
@@ -215,25 +218,72 @@ const SHAPES: Shape[] = [
   { id: 'T', matrix: [[1, 1, 1], [0, 1, 0]], color: 'bg-[#33cc33]' }, // T shape
   { id: 'Z', matrix: [[1, 1, 0], [0, 1, 1]], color: 'bg-[#cc2222]' }, // Z shape
   { id: 'S', matrix: [[0, 1, 1], [1, 1, 0]], color: 'bg-[#33cc33]' }, // S shape
-  { id: '3x3-corner', matrix: [[1, 1, 1], [1, 0, 0], [1, 0, 0]], color: 'bg-[#ffcc00]' }, // Corner shape
+  { id: '3x3-corner', matrix: [[1, 1, 1], [1, 0, 0], [1, 0, 0]], color: 'bg-[#ffcc00]' }, // Corner shape (5 blocks) - Top Left
+  { id: '3x3-corner-2', matrix: [[1, 1, 1], [0, 0, 1], [0, 0, 1]], color: 'bg-[#ffcc00]' }, // Corner shape (5 blocks) - Top Right
+  { id: '3x3-corner-3', matrix: [[1, 0, 0], [1, 0, 0], [1, 1, 1]], color: 'bg-[#ffcc00]' }, // Corner shape (5 blocks) - Bottom Left
+  { id: '3x3-corner-4', matrix: [[0, 0, 1], [0, 0, 1], [1, 1, 1]], color: 'bg-[#ffcc00]' }, // Corner shape (5 blocks) - Bottom Right
+  { id: 'corner-2x2-1', matrix: [[1, 1], [1, 0]], color: 'bg-[#00d2ff]' }, // 2x2 Corner (3 blocks) - Top Left
+  { id: 'corner-2x2-2', matrix: [[1, 1], [0, 1]], color: 'bg-[#00d2ff]' }, // 2x2 Corner (3 blocks) - Top Right
+  { id: 'corner-2x2-3', matrix: [[1, 0], [1, 1]], color: 'bg-[#00d2ff]' }, // 2x2 Corner (3 blocks) - Bottom Left
+  { id: 'corner-2x2-4', matrix: [[0, 1], [1, 1]], color: 'bg-[#00d2ff]' }, // 2x2 Corner (3 blocks) - Bottom Right
   { id: '3x2', matrix: [[1, 1, 1], [1, 1, 1]], color: 'bg-[#cc2222]' }, // 3x2 rectangle
   { id: '4x2', matrix: [[1, 1, 1, 1], [1, 1, 1, 1]], color: 'bg-[#ffcc00]' }, // 4x2 rectangle
   { id: '2x1', matrix: [[1], [1]], color: 'bg-[#33cc33]' }, // Vertical 2-block
   { id: '3x1', matrix: [[1], [1], [1]], color: 'bg-[#33cc33]' }, // Vertical 3-block
   { id: '4x1', matrix: [[1], [1], [1], [1]], color: 'bg-[#33cc33]' }, // Vertical 4-block
+  { id: '1x5', matrix: [[1, 1, 1, 1, 1]], color: 'bg-[#ffcc00]' }, // Horizontal 5-block
+  { id: '5x1', matrix: [[1], [1], [1], [1], [1]], color: 'bg-[#33cc33]' }, // Vertical 5-block
+  { id: 'side-t-left', matrix: [[1, 0], [1, 1], [1, 0]], color: 'bg-[#9933cc]' }, // Side T shape Left
+  { id: 'side-t-right', matrix: [[0, 1], [1, 1], [0, 1]], color: 'bg-[#9933cc]' }, // Side T shape Right
+  { id: 'diag-left', matrix: [[1, 0], [0, 1]], color: 'bg-[#00d2ff]' }, // Diagonal 2-block Left
+  { id: 'diag-right', matrix: [[0, 1], [1, 0]], color: 'bg-[#00d2ff]' }, // Diagonal 2-block Right
 ];
 
-const getRandomShapes = (count: number, level: number): Shape[] => {
-  const shapes: Shape[] = [];
-  const complexProbability = Math.min(0.9, 0.4 + (level * 0.05));
+// --- SHAPE GENERATION LOGIC ---
+/**
+ * A "Bag" system for shape generation.
+ * This ensures that every shape from the SHAPES array is used exactly once 
+ * before any shape is repeated, providing maximum variety and preventing 
+ * the "same shapes repeating" issue.
+ */
+let shapeBag: Shape[] = [];
 
-  for (let i = 0; i < count; i++) {
-    const shape = SHAPES[Math.floor(Math.random() * SHAPES.length)];
-    // Use a more robust unique ID generation
-    const uniqueId = `${shape.id}-${Date.now()}-${Math.random().toString(36).substr(2, 9)}-${i}`;
-    shapes.push({ ...shape, id: uniqueId });
+/**
+ * Refills and shuffles the shape bag.
+ */
+const refillBag = () => {
+  // Create a copy of all shapes and shuffle them using Fisher-Yates algorithm
+  const newBag = [...SHAPES];
+  for (let i = newBag.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [newBag[i], newBag[j]] = [newBag[j], newBag[i]];
   }
-  return shapes;
+  shapeBag = newBag;
+};
+
+/**
+ * Gets a set of random shapes using the bag system.
+ * @param count - Number of shapes to generate (usually 3).
+ * @param level - Current game level (can be used for difficulty scaling).
+ */
+const getRandomShapes = (count: number, level: number): Shape[] => {
+  const result: Shape[] = [];
+  
+  for (let i = 0; i < count; i++) {
+    // If bag is empty, refill it
+    if (shapeBag.length === 0) {
+      refillBag();
+    }
+    
+    // Take the next shape from the bag
+    const shape = shapeBag.pop()!;
+    
+    // Generate a unique ID for this specific instance of the shape
+    const uniqueId = `${shape.id}-${Date.now()}-${Math.random().toString(36).substr(2, 9)}-${i}`;
+    result.push({ ...shape, id: uniqueId });
+  }
+  
+  return result;
 };
 
 export default function App() {
@@ -261,9 +311,32 @@ export default function App() {
   const [showAd, setShowAd] = useState(false);
   const [showOnboarding, setShowOnboarding] = useState(false);
   const [onboardingStep, setOnboardingStep] = useState(0);
+  const [isShaking, setIsShaking] = useState(false);
+  const [floatingScores, setFloatingScores] = useState<{ id: string, score: number, x: number, y: number }[]>([]);
+  
+  // Stats for Game Over screen
+  const [totalLinesCleared, setTotalLinesCleared] = useState(0);
+  const [maxCombo, setMaxCombo] = useState(0);
+  
+  // Leaderboard submission state
+  const [username, setUsername] = useState(tg?.initDataUnsafe?.user?.first_name || '');
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isSubmitted, setIsSubmitted] = useState(false);
+  const [submitError, setSubmitError] = useState<string | null>(null);
+  const [toast, setToast] = useState<{ message: string, type: 'success' | 'info' | 'error' } | null>(null);
+  const [hasSavedUsername, setHasSavedUsername] = useState(false);
 
   const gridRef = useRef<HTMLDivElement>(null);
   const dragContainerRef = useRef<HTMLDivElement>(null);
+
+  // Load persistent username
+  useEffect(() => {
+    const saved = localStorage.getItem('blockBlast_username');
+    if (saved) {
+      setUsername(saved);
+      setHasSavedUsername(true);
+    }
+  }, []);
 
   /**
    * Resets the game state to start a new session.
@@ -277,6 +350,8 @@ export default function App() {
     setXp(0);
     setLevel(1);
     setRefreshCount(3);
+    setTotalLinesCleared(0);
+    setMaxCombo(0);
     haptic.notification('success');
   };
 
@@ -296,13 +371,19 @@ export default function App() {
     // 2. Set a flag that it was explicitly cleared so mock data doesn't reappear on refresh
     localStorage.setItem('blockBlast_leaderboard_cleared', 'true');
     
-    // 3. Clear the state completely to update the UI immediately
+    // 3. Clear the saved username so the user can enter it again
+    localStorage.removeItem('blockBlast_username');
+    setUsername(tg?.initDataUnsafe?.user?.first_name || '');
+    setHasSavedUsername(false);
+    
+    // 4. Clear the state completely to update the UI immediately
     setLeaderboardData([]);
     
-    // 4. Provide haptic feedback to the user via Telegram SDK to confirm the action
+    // 5. Provide haptic feedback to the user via Telegram SDK to confirm the action
     haptic.notification('success');
+    showToast("Leaderboard and name cleared!", "info");
     
-    // 5. Log for debugging
+    // 6. Log for debugging
     console.log("Leaderboard cleared successfully");
   };
 
@@ -522,10 +603,38 @@ export default function App() {
     setXp(prev => prev + finalPoints);
     setGrid(newGrid);
     
+    // Trigger floating score at the placement position
+    if (gridRef.current) {
+      const rect = gridRef.current.getBoundingClientRect();
+      const centerX = startC * (rect.width / GRID_SIZE) + (shape.matrix[0].length * (rect.width / GRID_SIZE)) / 2;
+      const centerY = startR * (rect.height / GRID_SIZE) + (shape.matrix.length * (rect.height / GRID_SIZE)) / 2;
+      
+      const newFloatingScore = {
+        id: `score-${Date.now()}-${Math.random()}`,
+        score: finalPoints,
+        x: centerX,
+        y: centerY
+      };
+      
+      setFloatingScores(prev => [...prev, newFloatingScore]);
+      setTimeout(() => {
+        setFloatingScores(prev => prev.filter(fs => fs.id !== newFloatingScore.id));
+      }, 1000);
+    }
+    
     if (linesCleared > 0) {
-      setCombo(prev => prev + 1);
+      setCombo(prev => {
+        const next = prev + 1;
+        if (next > maxCombo) setMaxCombo(next);
+        return next;
+      });
+      setTotalLinesCleared(prev => prev + linesCleared);
       haptic.notification('success');
       playSound('clear', soundEnabled);
+      
+      // Trigger screen shake for combos
+      setIsShaking(true);
+      setTimeout(() => setIsShaking(false), 300);
     } else {
       setCombo(0);
       haptic.impact('medium');
@@ -547,10 +656,12 @@ export default function App() {
   };
 
   /**
-   * Handles game over state, updates high score and leaderboard.
+   * Handles game over state, updates high score.
    */
   const handleGameOver = async (finalScore: number) => {
     setGameOver(true);
+    setIsSubmitted(false);
+    setSubmitError(null);
     haptic.notification('error');
 
     if (finalScore > highScore) {
@@ -558,32 +669,162 @@ export default function App() {
       localStorage.setItem('blockBlast_highScore', finalScore.toString());
     }
 
-    // Prepare leaderboard entry
-    const user = tg?.initDataUnsafe?.user || { id: 'local', first_name: 'Anonymous Player' };
-    const entry = {
-      userId: user.id.toString(),
-      username: user.first_name || 'Anonymous Player',
-      score: finalScore,
-      level: level,
-      weekId: getWeekId(),
-      timestamp: new Date().toISOString()
-    };
-
-    if (db) {
-      try {
-        await addDoc(collection(db, 'leaderboard'), {
-          ...entry,
-          timestamp: serverTimestamp()
-        });
-      } catch (e) {
-        console.error("Error saving to leaderboard:", e);
-      }
-    } else {
-      const local = JSON.parse(localStorage.getItem('blockBlast_leaderboard') || '[]');
-      local.push(entry);
-      local.sort((a: any, b: any) => b.score - a.score);
-      localStorage.setItem('blockBlast_leaderboard', JSON.stringify(local.slice(0, 50)));
+    // Auto-submit if username is already saved
+    const savedUsername = localStorage.getItem('blockBlast_username');
+    if (savedUsername) {
+      // We need to wait a tiny bit to ensure state is updated or just use the local variables
+      setTimeout(() => {
+        submitScore();
+      }, 500);
     }
+  };
+
+  /**
+   * Submits the score to the leaderboard with username validation.
+   */
+  const submitScore = async () => {
+    // 1. Basic validation
+    if (!username || username.trim().length < 3) {
+      setSubmitError("Username must be at least 3 characters.");
+      return;
+    }
+    if (username.length > 20) {
+      setSubmitError("Username must be 20 characters or less.");
+      return;
+    }
+    
+    // Alphanumeric and underscores only
+    const validChars = /^[a-zA-Z0-9_]+$/;
+    if (!validChars.test(username)) {
+      setSubmitError("Only letters, numbers, and underscores allowed.");
+      return;
+    }
+
+    setIsSubmitting(true);
+    setSubmitError(null);
+
+    try {
+      const currentUserId = tg?.initDataUnsafe?.user?.id?.toString() || 'local';
+      
+      // 2. Check for uniqueness if Firebase is available
+      if (db) {
+        // Check if username is taken by SOMEONE ELSE
+        const nameQuery = query(collection(db, 'leaderboard'), where('username', '==', username.trim()));
+        const nameSnapshot = await getDocs(nameQuery);
+        const nameTakenByOther = nameSnapshot.docs.some(doc => doc.data().userId !== currentUserId);
+        
+        if (nameTakenByOther) {
+          setSubmitError("This username is already taken.");
+          setIsSubmitting(false);
+          return;
+        }
+
+        // Check if THIS USER already has a record
+        const userQuery = query(collection(db, 'leaderboard'), where('userId', '==', currentUserId));
+        const userSnapshot = await getDocs(userQuery);
+
+        if (!userSnapshot.empty) {
+          const existingDoc = userSnapshot.docs[0];
+          const existingData = existingDoc.data();
+          
+          // Update if score is higher
+          if (score > existingData.score) {
+            await updateDoc(doc(db, 'leaderboard', existingDoc.id), {
+              username: username.trim(),
+              score: score,
+              level: level,
+              linesCleared: totalLinesCleared,
+              maxCombo: maxCombo,
+              timestamp: serverTimestamp()
+            });
+          } else {
+            // Just update username if it changed
+            await updateDoc(doc(db, 'leaderboard', existingDoc.id), {
+              username: username.trim()
+            });
+          }
+        } else {
+          // Create new record
+          const entry = {
+            userId: currentUserId,
+            username: username.trim(),
+            score: score,
+            level: level,
+            linesCleared: totalLinesCleared,
+            maxCombo: maxCombo,
+            weekId: getWeekId(),
+            timestamp: serverTimestamp()
+          };
+          await addDoc(collection(db, 'leaderboard'), entry);
+        }
+      } else {
+        // Local storage fallback
+        const local = JSON.parse(localStorage.getItem('blockBlast_leaderboard') || '[]');
+        
+        // Check uniqueness in local storage
+        const nameTakenByOther = local.some((e: any) => e.username === username.trim() && e.userId !== currentUserId);
+        
+        if (nameTakenByOther) {
+          setSubmitError("This username is already taken.");
+          setIsSubmitting(false);
+          return;
+        }
+
+        const existingIndex = local.findIndex((e: any) => e.userId === currentUserId);
+        
+        if (existingIndex !== -1) {
+          if (score > local[existingIndex].score) {
+            local[existingIndex] = {
+              ...local[existingIndex],
+              username: username.trim(),
+              score: score,
+              level: level,
+              linesCleared: totalLinesCleared,
+              maxCombo: maxCombo,
+              timestamp: new Date().toISOString()
+            };
+          } else {
+            local[existingIndex].username = username.trim();
+          }
+        } else {
+          const entry = {
+            userId: currentUserId,
+            username: username.trim(),
+            score: score,
+            level: level,
+            linesCleared: totalLinesCleared,
+            maxCombo: maxCombo,
+            weekId: getWeekId(),
+            timestamp: new Date().toISOString()
+          };
+          local.push(entry);
+        }
+
+        local.sort((a: any, b: any) => b.score - a.score);
+        localStorage.setItem('blockBlast_leaderboard', JSON.stringify(local.slice(0, 50)));
+      }
+
+      setIsSubmitted(true);
+      localStorage.setItem('blockBlast_username', username.trim());
+      setHasSavedUsername(true);
+      haptic.notification('success');
+      showToast("Score submitted successfully!", "success");
+      fetchLeaderboard(); // Refresh leaderboard data
+    } catch (e) {
+      console.error("Error saving to leaderboard:", e);
+      setSubmitError("Failed to submit score. Please try again.");
+      showToast("Submission failed", "error");
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  /**
+   * Shows a temporary toast notification.
+   */
+  const showToast = (message: string, type: 'success' | 'info' | 'error' = 'info') => {
+    setToast({ message, type });
+    setTimeout(() => setToast(null), 3000);
   };
 
   /**
@@ -782,17 +1023,43 @@ export default function App() {
 
       {/* Grid Container: The main game board */}
       <div className="flex-1 flex items-center justify-center p-4">
-        <div 
+        <motion.div 
           ref={gridRef}
+          animate={isShaking ? {
+            x: [0, -10, 10, -10, 10, 0],
+            y: [0, 5, -5, 5, -5, 0]
+          } : {}}
+          transition={{ duration: 0.3 }}
           className="relative grid grid-cols-8 gap-[2px] p-2 bg-[#0a122a] rounded-xl aspect-square w-full max-w-[400px] border-[4px] border-[#0a122a]"
           style={{ gridTemplateRows: 'repeat(8, 1fr)' }}
         >
+          {/* Floating Scores */}
+          <AnimatePresence>
+            {floatingScores.map(fs => (
+              <motion.div
+                key={fs.id}
+                initial={{ opacity: 0, scale: 0.5, y: 0 }}
+                animate={{ opacity: 1, scale: 1.2, y: -100 }}
+                exit={{ opacity: 0, scale: 1.5 }}
+                transition={{ duration: 0.8, ease: "easeOut" }}
+                className="absolute pointer-events-none z-50 font-black text-2xl text-white drop-shadow-[0_2px_4px_rgba(0,0,0,0.5)]"
+                style={{ 
+                  left: fs.x, 
+                  top: fs.y,
+                  transform: 'translate(-50%, -50%)' 
+                }}
+              >
+                +{fs.score}
+              </motion.div>
+            ))}
+          </AnimatePresence>
+
           {/* Render the 8x8 grid cells */}
           {grid.map((row, r) => (
-            <React.Fragment key={`row-${r}`}>
+            <React.Fragment key={`grid-row-${r}`}>
               {row.map((cell, c) => (
                 <div 
-                  key={`${r}-${c}`} 
+                  key={`grid-cell-${r}-${c}`} 
                   className={cn(
                     "rounded-[4px] relative overflow-hidden border border-black/10 transition-all duration-200",
                     // 3D effect: shadow for filled blocks, inset shadow for empty cells
@@ -845,21 +1112,52 @@ export default function App() {
               ))}
             </div>
           )}
-        </div>
+        </motion.div>
       </div>
 
       {/* Combo Display */}
-      <AnimatePresence>
+      <AnimatePresence mode="wait">
         {combo > 1 && (
           <motion.div 
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 pointer-events-none z-20"
+            key={`combo-${combo}`}
+            initial={{ opacity: 0, scale: 0.5, rotate: -10, y: 20 }}
+            animate={{ 
+              opacity: 1, 
+              scale: [1, 1.2, 1], 
+              rotate: [0, 5, -5, 0],
+              y: 0 
+            }}
+            exit={{ opacity: 0, scale: 1.5, y: -50 }}
+            transition={{ 
+              default: { type: "spring", stiffness: 400, damping: 15 },
+              scale: { duration: 0.3 },
+              rotate: { duration: 0.3 }
+            }}
+            className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 pointer-events-none z-50 flex flex-col items-center"
           >
-            <span className="text-4xl font-black text-blue-500 italic">
+            <motion.span 
+              animate={{ 
+                color: combo > 5 ? ["#ef4444", "#f59e0b", "#10b981", "#3b82f6", "#ef4444"] : "#3b82f6" 
+              }}
+              transition={{ duration: 2, repeat: Infinity }}
+              className={cn(
+                "font-black italic drop-shadow-[0_4px_4px_rgba(0,0,0,0.5)] text-center",
+                combo > 8 ? "text-6xl" : combo > 5 ? "text-5xl" : "text-4xl"
+              )}
+            >
+              {combo > 8 ? "UNBELIEVABLE!" : 
+               combo > 6 ? "PERFECT!" : 
+               combo > 4 ? "AMAZING!" : 
+               combo > 2 ? "GREAT!" : "GOOD!"}
+            </motion.span>
+            <motion.span 
+              className={cn(
+                "font-black italic text-white drop-shadow-[0_2px_2px_rgba(0,0,0,0.8)]",
+                combo > 8 ? "text-5xl" : combo > 5 ? "text-4xl" : "text-3xl"
+              )}
+            >
               COMBO x{combo}
-            </span>
+            </motion.span>
           </motion.div>
         )}
       </AnimatePresence>
@@ -876,8 +1174,9 @@ export default function App() {
               refreshCount > 0 ? "bg-white text-[#3252a8] border-2 border-[#3252a8]" : "bg-gray-300 text-gray-500 cursor-not-allowed"
             )}
           >
-            <div className="relative">
-              <Video size={24} fill="currentColor" />
+            <div className="relative flex items-center justify-center">
+              <RefreshCw size={24} />
+              <Play size={10} className="absolute fill-current ml-[1px]" />
               <span className="absolute -top-2 -right-2 bg-red-500 text-white text-[10px] font-black w-5 h-5 rounded-full flex items-center justify-center border-2 border-white">
                 {refreshCount}
               </span>
@@ -906,7 +1205,7 @@ export default function App() {
                 <React.Fragment key={`shape-${shape.id}-row-${r}`}>
                   {row.map((val, c) => (
                     <div 
-                      key={`${r}-${c}`}
+                      key={`shape-cell-${shape.id}-${r}-${c}`}
                       className={cn(
                         "w-7 h-7 rounded-[3px] relative overflow-hidden",
                         val === 1 ? cn(shape.color, "border border-black/10 shadow-[0_2px_0_rgba(0,0,0,0.3)]") : "bg-transparent"
@@ -964,11 +1263,11 @@ export default function App() {
               gridTemplateRows: `repeat(${draggedShape.matrix.length}, 1fr)`
             }}
           >
-            {draggedShape.matrix.map((row, r) => (
-              <React.Fragment key={`drag-row-${r}`}>
-                {row.map((val, c) => (
-                  <div 
-                    key={`drag-${r}-${c}`}
+              {draggedShape.matrix.map((row, r) => (
+                <React.Fragment key={`drag-row-${draggedShape.id}-${r}`}>
+                  {row.map((val, c) => (
+                    <div 
+                      key={`drag-cell-${draggedShape.id}-${r}-${c}`}
                     className={cn(
                       "rounded-[4px] relative overflow-hidden transition-none",
                       val === 1 ? cn(draggedShape.color, "border border-black/20 shadow-[0_6px_0_rgba(0,0,0,0.4),0_12px_20px_rgba(0,0,0,0.3)]") : "bg-transparent"
@@ -1085,28 +1384,97 @@ export default function App() {
             <motion.div 
               initial={{ scale: 0.9, y: 20 }}
               animate={{ scale: 1, y: 0 }}
-              className="bg-white text-black w-full max-w-xs rounded-3xl p-8 flex flex-col items-center text-center"
+              className="bg-white text-black w-full max-w-sm rounded-[2.5rem] p-8 flex flex-col items-center text-center shadow-2xl overflow-y-auto max-h-[90vh]"
             >
-              <div className="w-20 h-20 bg-rose-100 text-rose-500 rounded-full flex items-center justify-center mb-6">
-                <X size={40} strokeWidth={3} />
+              <div className="w-16 h-16 bg-rose-100 text-rose-500 rounded-full flex items-center justify-center mb-4">
+                <X size={32} strokeWidth={3} />
               </div>
-              <h2 className="text-3xl font-black mb-2">GAME OVER</h2>
-              <p className="text-gray-500 mb-8 font-medium">You scored {score} points!</p>
+              <h2 className="text-3xl font-black mb-1">GAME OVER</h2>
+              <p className="text-gray-500 mb-6 font-medium">Final Score: <span className="text-blue-600 font-black">{score}</span></p>
               
-              <button 
-                onClick={restartGame}
-                className="w-full bg-blue-500 text-white font-black py-4 rounded-2xl flex items-center justify-center gap-2 hover:bg-blue-600 active:scale-95 transition-all shadow-lg shadow-blue-500/30"
-              >
-                <Play size={20} fill="currentColor" />
-                TRY AGAIN
-              </button>
-              
-              <button 
-                onClick={() => { setGameOver(false); setShowLeaderboard(true); }}
-                className="w-full mt-3 bg-gray-100 text-gray-600 font-bold py-4 rounded-2xl hover:bg-gray-200 active:scale-95 transition-all"
-              >
-                LEADERBOARD
-              </button>
+              {/* Stats Grid */}
+              <div className="grid grid-cols-2 gap-3 w-full mb-6">
+                <div className="bg-slate-50 p-4 rounded-2xl border border-slate-100">
+                  <span className="text-[10px] uppercase tracking-widest text-slate-400 font-bold block mb-1">Lines</span>
+                  <span className="text-xl font-black text-slate-700">{totalLinesCleared}</span>
+                </div>
+                <div className="bg-slate-50 p-4 rounded-2xl border border-slate-100">
+                  <span className="text-[10px] uppercase tracking-widest text-slate-400 font-bold block mb-1">Max Combo</span>
+                  <span className="text-xl font-black text-slate-700">x{maxCombo}</span>
+                </div>
+              </div>
+
+              {/* Leaderboard Submission */}
+              {!isSubmitted ? (
+                <div className="w-full bg-slate-50 p-5 rounded-3xl border border-slate-100 mb-6">
+                  <span className="text-xs font-bold text-slate-400 uppercase tracking-widest block mb-3">Leaderboard Submission</span>
+                  
+                  {!hasSavedUsername ? (
+                    <div className="relative mb-3">
+                      <input 
+                        type="text" 
+                        value={username}
+                        onChange={(e) => setUsername(e.target.value)}
+                        placeholder="Enter username..."
+                        maxLength={20}
+                        className="w-full bg-white border-2 border-slate-200 rounded-xl px-4 py-3 font-bold text-slate-700 focus:border-blue-500 outline-none transition-all"
+                      />
+                      <span className="absolute right-3 top-1/2 -translate-y-1/2 text-[10px] font-black text-slate-300">
+                        {username.length}/20
+                      </span>
+                    </div>
+                  ) : (
+                    <div className="flex items-center justify-between bg-white border-2 border-slate-100 rounded-xl px-4 py-3 mb-3">
+                      <div className="flex flex-col items-start">
+                        <span className="text-[8px] font-black text-slate-400 uppercase tracking-widest">Submit as</span>
+                        <span className="font-black text-slate-700">{username}</span>
+                      </div>
+                      <button 
+                        onClick={() => setHasSavedUsername(false)}
+                        className="text-[10px] font-black text-blue-500 hover:text-blue-600 uppercase tracking-widest"
+                      >
+                        Edit
+                      </button>
+                    </div>
+                  )}
+
+                  {submitError && (
+                    <p className="text-red-500 text-xs font-bold mb-3">{submitError}</p>
+                  )}
+                  <button 
+                    onClick={submitScore}
+                    disabled={isSubmitting}
+                    className="w-full bg-blue-500 text-white font-black py-3 rounded-xl flex items-center justify-center gap-2 hover:bg-blue-600 active:scale-95 transition-all disabled:opacity-50"
+                  >
+                    {isSubmitting ? "SUBMITTING..." : "SUBMIT SCORE"}
+                  </button>
+                </div>
+              ) : (
+                <div className="w-full bg-green-50 p-5 rounded-3xl border border-green-100 mb-6 flex flex-col items-center">
+                  <div className="w-10 h-10 bg-green-500 text-white rounded-full flex items-center justify-center mb-2">
+                    <Check size={20} strokeWidth={3} />
+                  </div>
+                  <span className="text-green-600 font-black text-sm">SCORE SUBMITTED!</span>
+                </div>
+              )}
+
+              <div className="flex flex-col gap-3 w-full">
+                <button 
+                  onClick={restartGame}
+                  className="w-full bg-[#3252a8] text-white font-black py-4 rounded-2xl flex items-center justify-center gap-2 hover:opacity-90 active:scale-95 transition-all shadow-lg shadow-blue-900/20"
+                >
+                  <Play size={20} fill="currentColor" />
+                  PLAY AGAIN
+                </button>
+                
+                <button 
+                  onClick={() => { setGameOver(false); setShowLeaderboard(true); }}
+                  className="w-full bg-slate-100 text-slate-600 font-black py-4 rounded-2xl hover:bg-slate-200 active:scale-95 transition-all flex items-center justify-center gap-2"
+                >
+                  <Trophy size={18} />
+                  RANK
+                </button>
+              </div>
             </motion.div>
           </motion.div>
         )}
@@ -1153,7 +1521,7 @@ export default function App() {
               <div className="flex-1 overflow-y-auto p-4 space-y-3">
                 {leaderboardData.length > 0 ? leaderboardData.map((entry, index) => (
                   <motion.div 
-                    key={entry.id || `leader-item-${index}-${entry.score}`}
+                    key={entry.id || `leader-item-${index}-${entry.userId || entry.username || 'anon'}-${entry.score}-${entry.timestamp || Date.now()}`}
                     initial={{ opacity: 0, x: -20 }}
                     animate={{ opacity: 1, x: 0 }}
                     transition={{ delay: index * 0.05 }}
@@ -1347,6 +1715,22 @@ export default function App() {
                 ))}
               </div>
             </motion.div>
+          </motion.div>
+        )}
+        {toast && (
+          <motion.div 
+            initial={{ opacity: 0, y: 50 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: 50 }}
+            className="fixed bottom-10 left-1/2 -translate-x-1/2 z-[1000] px-6 py-3 rounded-2xl shadow-2xl flex items-center gap-3 min-w-[200px]"
+            style={{ 
+              backgroundColor: toast.type === 'error' ? '#ef4444' : toast.type === 'success' ? '#22c55e' : '#3b82f6',
+              color: 'white'
+            }}
+          >
+            {toast.type === 'success' && <Check size={18} strokeWidth={3} />}
+            {toast.type === 'error' && <X size={18} strokeWidth={3} />}
+            <span className="font-bold text-sm">{toast.message}</span>
           </motion.div>
         )}
       </AnimatePresence>
