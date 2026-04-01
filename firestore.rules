@@ -1,0 +1,36 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // ===============================================================
+    // Assumed Data Model
+    // ===============================================================
+    // Collection: leaderboard
+    // Document ID: {scoreId}
+    // Fields:
+    //   - userId: string (required) - Telegram ID
+    //   - name: string (required) - Display name
+    //   - score: number (required) - High score
+    //   - level: number (optional) - Level reached
+    //   - timestamp: timestamp (required) - Creation time
+    // ===============================================================
+
+    function isAuthenticated() {
+      return true; // For Telegram Mini Apps, we often don't use Firebase Auth directly
+    }
+
+    function isValidScore(data) {
+      return data.userId is string &&
+             data.name is string && data.name.size() > 0 && data.name.size() < 50 &&
+             data.score is number && data.score >= 0 &&
+             data.weekId is string && data.weekId.matches("^\\d{4}-W\\d{1,2}$") &&
+             data.timestamp is timestamp;
+    }
+
+    match /leaderboard/{scoreId} {
+      allow read: if true;
+      allow create: if isValidScore(request.resource.data);
+      allow update: if isValidScore(request.resource.data) && 
+                     request.resource.data.score > resource.data.score;
+    }
+  }
+}

@@ -1,0 +1,24 @@
+{
+  "entities": {
+    "leaderboard": {
+      "title": "Global Leaderboard",
+      "description": "Stores the top scores of players.",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string", "description": "The Telegram user ID." },
+        "name": { "type": "string", "description": "The player's name." },
+        "score": { "type": "integer", "description": "The high score." },
+        "level": { "type": "integer", "description": "The level reached." },
+        "weekId": { "type": "string", "description": "The current week identifier (YYYY-WW)." },
+        "timestamp": { "type": "string", "format": "date-time", "description": "When the score was recorded." }
+      },
+      "required": ["userId", "name", "score", "weekId", "timestamp"]
+    }
+  },
+  "firestore": {
+    "/leaderboard/{scoreId}": {
+      "schema": "leaderboard",
+      "description": "Collection of global high scores."
+    }
+  }
+}
